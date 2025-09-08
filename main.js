@@ -28,7 +28,6 @@ ipcMain.handle("run-astar-step", async (event, { gridData, startId, endId }) => 
 
     child.on("close", () => {
       try {
-        console.log("AStar Output: '{}'", output);
         const result = JSON.parse(output);
         resolve(result);
       } catch (err) {
