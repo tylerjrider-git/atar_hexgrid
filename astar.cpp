@@ -1,37 +1,30 @@
 #include <iostream>
 #include <fstream>
+
 #include <vector>
 #include <string>
 #include <sstream>
-
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
 // Node structure matching the grid
 struct Node {
-    int id;
+    int mId;
     std::string state;
     std::vector<int> neighbors;
     int q,r,s;
 
     // optional fields for A* step
-    int distance = 0;
-    bool visited = false;
     int h_cost = 0;
     int f_cost = 0;
     int g_cost = std::numeric_limits<int>::max();
 
     int parent = -1;
-
-    bool operator>(const Node& other) const;
+    int distance = 0;
+    bool visited = false;
     bool operator==(const Node& other) const;
 };
-
-bool Node::operator>(const Node& other) const 
-{
-    return f_cost > other.f_cost;
-}
 
 bool Node::operator==(const Node& other) const 
 {
@@ -48,7 +41,7 @@ const std::vector<std::tuple<int,int,int>> HEX_DIRECTIONS = {
 };
 
 
-int manhattanDistance(Node* start, Node* end)
+static int manhattanDistance(Node* start, Node* end)
 {
     return (std::abs(end->q - start->q) +
             std::abs(end->s - start->s) +
@@ -64,78 +57,55 @@ struct CompareNodes {
     }
 };
 
-void buildNeighbors(std::vector<Node>& nodes) {
-    for (auto& node : nodes) {
-        node.neighbors.clear();
-        for (auto [dq, dr, ds] : HEX_DIRECTIONS) {
-            int nq = node.q + dq;
-            int nr = node.r + dr;
-            int ns = node.s + ds;
-
-            // find a node that matches these cube coords
-            for (auto& other : nodes) {
-                if (other.q == nq && other.r == nr && other.s == ns) {
-                    node.neighbors.push_back(other.id);
-                    break; // stop after finding one match
-                }
+static void findNeighbors(std::vector<Node>& nodes, Node& node)
+{
+    node.neighbors.clear();
+    for (auto [dq, dr, ds] : HEX_DIRECTIONS) {
+        int nq = node.q + dq;
+        int nr = node.r + dr;
+        int ns = node.s + ds;
+        
+        // find a node that matches these cube coords
+        for (auto& other : nodes) {
+            // Skip blocked nodes.
+            if (other.state == "CLOSED")
+                continue;
+            if (other.q == nq && other.r == nr && other.s == ns) {
+                node.neighbors.push_back(other.mId);
+                break;
             }
         }
     }
 }
 
-void astar_init(std::vector<Node>& nodes, int startId, int endId)
-{
-    // Initialize Cost.
-    if (startId <0 || startId >= nodes.size() ||  endId <0 || endId >= nodes.size()) {
-        fprintf(stderr, "No start/end node??\n");
-        return;
-    }
-    Node& endNode = nodes[endId];
- 
-    // Remove "blacked out elements"
-    // std::erase(std::remove_if(nodes.first(), nodes.end(), [](Node& node){
-    //     node.state == "BLACK";
-    // }));
-    buildNeighbors(nodes);
-    std::fprintf(stderr, "Built neighbors\n");
-}
-
-void reconstructPath(std::unordered_map<int, Node*>& visited, Node* current, Node* start)
+static void reconstructPath(std::unordered_map<int, Node*>& visited, Node* current, Node* start)
 {      
     std::vector<Node*> path;
-    int max_len = 100;
-    while (!(current == start)) 
+    while ((current != start)) 
     {
-        if (max_len-- <= 0) {
-            fprintf(stderr, "Bug, current(%d), parent(%d)\n", current->id, current->parent);
-            return;
-        }
         path.push_back(current);
-        auto it = visited.find(current->id);
-        if (it == visited.end() || current->id == start->id) break;
+        auto it = visited.find(current->mId);
+        if (it == visited.end() || current->mId == start->mId) break;
         current = visited[it->second->parent];
     }
     path.push_back(current); // push start node.
 
     reverse(path.begin(), path.end());
     for (auto& n : path) {
-        n->distance = n->f_cost;
+        n->distance = n->g_cost;
         n->visited = true;
-        std::fprintf(stderr, "(%d)->", n->id);
     }
 }
-void astar_solve(std::vector<Node>& nodes, int startId, int endId)
+
+static bool astar_solve(std::vector<Node>& nodes, int startId, int endId)
 {
     std::priority_queue<Node*, std::vector<Node*>, CompareNodes> OpenList;
     std::unordered_map<int, Node*> ClosedList;
-
     Node* start = &nodes[startId];
     Node* goal = &nodes[endId];
 
-    if (goal->state == "BLACK") {
-        fprintf(stderr, "Cannot navigate, end goal is 'blocked'\n");
-        return;
-    }
+    if (goal->state == "CLOSED")
+        return false;
 
     start->g_cost = 0;
     start->h_cost = manhattanDistance(goal, start);
@@ -145,66 +115,61 @@ void astar_solve(std::vector<Node>& nodes, int startId, int endId)
     while (!OpenList.empty()) {
         Node* current = OpenList.top();
         OpenList.pop();
-        fprintf(stderr, "-->Checking Node(%d)\n", current->id);
 
-        if (current->id == endId) {
-            fprintf(stderr, "Found the end cost : %d\n", current->f_cost);
-            ClosedList[current->id] = current;
+        if (*current == *goal) {
+            ClosedList[current->mId] = current;
             reconstructPath(ClosedList, current, start);
-            return;
+            return true;
         }
-        // ALready been here, move on
-        if (ClosedList.count(current->id)) {
-            // fprintf(stderr, "<--Already been to (%d)\n", current->id);
+
+        // Already been here, move on
+        if (ClosedList.count(current->mId))
             continue;
-        }
-        ClosedList[current->id] = current;
-        for (int n_successor : current->neighbors) {
-            Node* successor = &nodes[n_successor];
 
-            if (successor->state == "BLACK") {
-                continue;
-            }
+        ClosedList[current->mId] = current;
 
-            if (ClosedList.count(successor->id)) {
-                // fprintf(stderr, "  <--Already been to (%d)\n", successor->id);
+        findNeighbors(nodes, *current);
+        for (int n : current->neighbors) {
+            Node* successor = &nodes[n];
+
+            // Already traversed this node
+            if (ClosedList.count(successor->mId))
                 continue;
-            }
-            successor->parent = current->id;
+
+                // Have already been here and its cheaper.
+            if (successor->g_cost < (current->g_cost + 1))
+                continue;
+
+            successor->parent = current->mId;
             successor->h_cost = manhattanDistance(goal, successor);
             successor->g_cost = current->g_cost + 1; 
             successor->f_cost = successor->g_cost + successor->h_cost;
-            // std::fprintf(stderr, "  >--Pushing node(%d)\n", successor->id);
-            
             OpenList.push(successor);
-            if (successor->id == endId) {
-                std::fprintf(stderr, "  --Found target, early breaking\n");
+
+            // early break to skip to the next pop().
+            if (successor->mId == endId)
                 break;
-            }
         }
-        fprintf(stderr, "<-- Done with (%d)\n", current->id);
     }
-    fprintf(stderr, "Failed to find path\n");
+    return false;
 }
 
 
 // from_json helper
-void from_json(const json& j, Node& n) {
-    n.id = j.at("id").get<int>();
+static void from_json(const json& j, Node& n) {
+    n.mId = j.at("id").get<int>();
     n.state = j.at("state").get<std::string>();
     n.neighbors = j.at("neighbors").get<std::vector<int>>();
-
     n.distance = j.at("distance").get<int>();
     n.f_cost = j.at("cost").get<int>();
-
     n.q = j["q"].get<int>();
     n.r = j["r"].get<int>();
     n.s = j["s"].get<int>();
 }
 
-void to_json(json& j, const Node& n) {
+static void to_json(json& j, const Node& n) {
     j = json{
-        {"id", n.id},
+        {"id", n.mId},
         {"state", n.state},
         {"neighbors", n.neighbors},
         {"distance", n.distance},
@@ -222,25 +187,16 @@ int main() {
     ss << std::cin.rdbuf();
     std::string input = ss.str();
 
-    // std::ifstream f("test-nodes.json");
-
     try {
         json j = json::parse(input);
         std::vector<Node> nodes = j["gridData"]["nodes"];
         int startId = j["startId"];
         int endId = j["endId"];
-
-        {
-            astar_init(nodes, startId, endId);
-            astar_solve(nodes, startId, endId);
-        }
-        
-
+        astar_solve(nodes, startId, endId);
         // Output updated nodes as JSON
         json output = j["gridData"];
         output["nodes"] = nodes;
 
-        std::cerr << output.dump() << std::endl;
         std::cout << output.dump() << std::endl;
 
     } catch (const std::exception& e) {
