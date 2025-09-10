@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import * as d3 from "d3";
 
-const HEX_NUMBER = 3;
+const HEX_NUMBER = 7;
 const NUM_HEX_TILES = HEX_NUMBER * (2 * HEX_NUMBER - 1); // Formula to find the x'th hex number.
 const HEX_RADIUS = 40;
-const STATES = ["GRAY", "WHITE", "BLACK"];
+const STATES = ["OPEN", "CLOSED"];
 const DIRECTIONS = [
     { q: +1, r: 0 },
     { q: +1, r: -1 },
@@ -21,6 +21,7 @@ function HexGrid() {
     const [cells, setCells] = useState([]);
     // const [startId, setStartId] = useState(0);
     // const [endId, setEndId] = useState(NUM_HEX_TILES);
+    const [maxCost, setMaxCost] = useState(1);
 
     const [transform, setTransform] = useState(d3.zoomIdentity);
     const [selectMode, setSelectMode] = useState(null); // "start", "end", or null
@@ -40,8 +41,8 @@ function HexGrid() {
                 black = 0;
             neighborIds.forEach((nid) => {
                 const neighbor = lookup.get(nid) || neighborIds.find((id) => id === nid);
-                if (neighbor?.state === "WHITE") white++;
-                if (neighbor?.state === "BLACK") black++;
+                if (neighbor?.state === "OPEN") white++;
+                if (neighbor?.state === "CLOSED") black++;
             });
             return { white, black };
         };
@@ -60,16 +61,16 @@ function HexGrid() {
             }
 
             const rand = Math.random();
-            let newState = "BLACK"; // default fallback
+            let newState = "CLOSED"; // default fallback
             if (rand < whitePct)
-                newState = "WHITE";
+                newState = "OPEN";
 
             if (cell.id == startId || cell.id == endId) {
                 console.log("Cell id: %d matches %d/%d", cell.id, startId, endId);
-                newState = "WHITE";
+                newState = "OPEN";
             }
             
-            return { ...cell,  cost: 0, state: newState };
+            return { ...cell,  cost: 0, state: newState, distance: 0, visited: false };
         });
     }
     function randomTile() {
@@ -121,6 +122,9 @@ function HexGrid() {
             setCells((prev) =>
                 prev.map((cell) => {
                     const update = stepResult["nodes"].find((s) => s.id === cell.id);
+                    if (cell.id == endId) {
+                        setMaxCost(update.distance)
+                    }
                     if (!update) return cell;
                     return {
                         ...cell,
@@ -182,7 +186,7 @@ function HexGrid() {
             setCells((prev) =>
                 prev.map((c) => c.id === cellId ? {
                     ...c,
-                    state: "WHITE",
+                    state: "OPEN",
                 } : c)
             );
         } else if (selectMode === "end") {
@@ -191,7 +195,7 @@ function HexGrid() {
             setCells((prev) =>
                 prev.map((c) => c.id === cellId ? {
                     ...c,
-                    state: "WHITE",
+                    state: "OPEN",
                 } : c)
             );
         } else {
@@ -207,21 +211,24 @@ function HexGrid() {
 
     // Color mapping
     const getFill = (cell) => {
-        if (cell.id == startId) return "rgb(0, 255,0)";
-        if (cell.id == endId) return "rgb(255,0,0)";
-        if (cell.state === "GRAY") return "gray";
-        if (cell.state === "WHITE") {
-            if (cell.cost > 0 && cell.visited) {
-                let r = 0;
-                let g = 255 - 127 * Math.max((cell.cost / NUM_HEX_TILES), 1.0);
-                return `rgb(0,${g},0)`;
+        if (cell.id == startId)
+            return "rgb(0, 255,0)";
+        if (cell.id == endId)
+            return "rgb(255,0,0)";
+
+        if (cell.state === "OPEN") {
+            if (cell.distance > 0 && cell.visited) {
+                let r = 255*(cell.distance / maxCost);
+                let g = 255 - 255*(cell.distance / maxCost);
+                return `rgb(${r},${g},0)`;
             } else if (cell.cost > 0) {
                 return "gray";
             } else {
                 return "white";
             }
         }
-        if (cell.state === "BLACK") return "black";
+        if (cell.state === "CLOSED")
+            return "black";
     };
 
     // Export grid data with exact axial neighbors
